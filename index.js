@@ -358,11 +358,12 @@ class SortableGrid extends Component {
     this._defaultDragActivationWiggle()
   }
 
-  handleTap = ({ onTap = NULL_FN, onDoubleTap = NULL_FN }) => () => {
+  handleTap = ({ onTap = NULL_FN, onDoubleTap = NULL_FN }) => (e) => {
+    let e2 = {nativeEvent: {...e.nativeEvent}}
     if (this.tapIgnore) this._resetTapIgnoreTime()
     else if (onDoubleTap != null) {
-      this.doubleTapWait ? this._onDoubleTap(onDoubleTap) : this._onSingleTap(onTap)
-    } else onTap()
+      this.doubleTapWait ? this._onDoubleTap(onDoubleTap) : this._onSingleTap(()=>onTap(e2))
+    } else onTap(e2);
   }
 
   // Helpers & other boring stuff

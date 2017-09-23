@@ -5,7 +5,8 @@ import {
   TouchableWithoutFeedback,
   PanResponder,
   Image,
-  View
+  View,
+  Text,
 } from 'react-native'
 
 import _ from 'lodash'
@@ -133,9 +134,16 @@ class SortableGrid extends Component {
   componentWillReceiveProps = (properties) => this.handleNewProps(properties)
 
   handleNewProps = (properties) => {
+
+    if (this.props.itemWidth && this.props.itemWidth != properties.itemWidth) {
+      this.assessGridSize({});
+    }
+
     this._assignReceivedPropertiesIntoThis(properties)
     this._saveItemOrder(properties.children)
     this._removeDisappearedChildren(properties.children)
+
+
   }
 
   onStartDrag = (evt, gestureState) => {
@@ -188,21 +196,87 @@ class SortableGrid extends Component {
         }
       })
       if (closest !== this.state.activeBlock) {
-        Animated.timing(
-          this._getBlock(closest).currentPosition,
-          {
-            toValue: this._getActiveBlock().origin,
-            duration: this.blockTransitionDuration
-          }
-        ).start()
-        let blockPositions = this.state.blockPositions
-        this._getActiveBlock().origin = blockPositions[closest].origin
-        blockPositions[closest].origin = originalPosition
-        this.setState({ blockPositions })
+        // todo: default should be swap, as this is the old behavior
+        let moveMode = this.props.moveMode || "flow";
 
-        var tempOrderIndex = this.itemOrder[this.state.activeBlock].order
-        this.itemOrder[this.state.activeBlock].order = this.itemOrder[closest].order
-        this.itemOrder[closest].order = tempOrderIndex
+        let originIndex = this.itemOrder[this.state.activeBlock].order;
+        let destinationIndex = this.itemOrder[closest].order;
+        let orderDistance = destinationIndex - originIndex
+
+        if (orderDistance == 1 || orderDistance == -1) moveMode = "swap";
+
+        if (moveMode == "swap") {
+          Animated.timing(
+            this._getBlock(closest).currentPosition,
+            {
+              toValue: this._getActiveBlock().origin,
+              duration: this.blockTransitionDuration
+            }
+          ).start()
+          let blockPositions = this.state.blockPositions;
+
+          // move active block to target position
+          this._getActiveBlock().origin = blockPositions[closest].origin
+
+          // move closest to old position of dragged object
+          blockPositions[closest].origin = originalPosition
+
+          this.setState({ blockPositions })
+
+          // swap the order - replace this with a loop to increment/decrement items
+          // between original and target positions.
+          var tempOrderIndex = this.itemOrder[this.state.activeBlock].order
+          this.itemOrder[this.state.activeBlock].order = this.itemOrder[closest].order
+          this.itemOrder[closest].order = tempOrderIndex
+        }
+        else {
+          let blockPositions = this.state.blockPositions;
+          //let positionsForOrder = [];
+          //for (let i = 0; i < this.itemOrder.length; i++) {
+          //  positionsForOrder[this.itemOrder[i].order] = this.blockPositions[i];
+          //}
+
+          if (orderDistance < 0) {
+            // moved to left. destinationIndex to originIndex - 1 increment order.
+            for (let i = 0; i < this.itemOrder.length; i++) {
+              let block = this.itemOrder[i];
+              if (block.order >= destinationIndex && block.order <= originIndex) {
+                if (block.order == originIndex) {
+                  block.order = destinationIndex;
+                }
+                else {
+                  block.order++;
+                }
+                let x = (block.order * this.state.blockWidth) % (this.itemsPerRow * this.state.blockWidth)
+                let y = Math.floor(block.order / this.itemsPerRow) * this.state.blockHeight
+                blockPositions[i].origin = {x, y}
+                this.animateBlockMove(i, blockPositions[i].origin);
+              }
+            }
+          }
+          else if (orderDistance > 0) {
+            // moved to right. originIndex + 1 to destinationIndex decrement order.
+            for (let i = 0; i < this.itemOrder.length; i++) {
+              let block = this.itemOrder[i];
+              if (block.order <= destinationIndex && block.order >= originIndex) {
+                if (block.order == originIndex) {
+                  block.order = destinationIndex;
+                }
+                else {
+                  block.order--;
+                }
+                let x = (block.order * this.state.blockWidth) % (this.itemsPerRow * this.state.blockWidth)
+                let y = Math.floor(block.order / this.itemsPerRow) * this.state.blockHeight
+                blockPositions[i].origin = {x, y}
+                this.animateBlockMove(i, blockPositions[i].origin);
+              }
+            }
+
+          }
+
+          this.setState({ blockPositions })
+
+        }
       }
     }
   }
@@ -280,21 +354,56 @@ class SortableGrid extends Component {
 
   assessGridSize = ({nativeEvent}) => {
     console.log("Calculating grid size");
-    if (this.props.itemWidth && this.props.itemWidth < nativeEvent.layout.width) {
-      this.itemsPerRow = Math.floor(nativeEvent.layout.width / this.props.itemWidth)
-      this.blockWidth = nativeEvent.layout.width / this.itemsPerRow
-      this.blockHeight = this.props.itemHeight || this.blockWidth
+    let layout = nativeEvent ? nativeEvent.layout : this.state.gridLayout;
+    if (!layout) return;
+
+    this.zoom = this.zoom || 1;
+
+    let baseWidth = (this.props.itemWidth || 200);
+    let baseHeight = (this.props.itemHeight || this.props.itemWidth || 200);
+
+    let maxWidth = this.props.maxItemWidth || baseWidth;
+    let minWidth = this.props.minItemWidth || baseWidth;
+
+    let maxZoom = maxWidth / baseWidth;
+    let minZoom = minWidth / baseWidth;
+
+    if (this.zoom > maxZoom) this.zoom = maxZoom;
+    if (this.zoom < minZoom) this.zoom = minZoom;
+
+    let requestedWidth = baseWidth * this.zoom;
+    let requestedHeight = baseHeight * this.zoom;
+
+    if (requestedWidth < layout.width) {
+      this.itemsPerRow = Math.floor(layout.width / requestedWidth)
+      this.blockWidth = layout.width / this.itemsPerRow
+      this.blockHeight = requestedHeight || this.blockWidth
     }
     else {
-      this.blockWidth = nativeEvent.layout.width / this.itemsPerRow
+      this.blockWidth = layout.width / this.itemsPerRow
       this.blockHeight = this.blockWidth
     }
-    if (this.state.gridLayout != nativeEvent.layout) {
+    if (this.state.gridLayout != layout || this.state.blockWidth != this.blockWidth || this.state.blockHeight != this.blockHeight) {
       this.setState({
-        gridLayout: nativeEvent.layout,
+        gridLayout: layout,
         blockWidth: this.blockWidth,
         blockHeight: this.blockHeight
       })
+      let blockPositions = this.state.blockPositions;
+      if (!blockPositions) return;
+      for (let i = 0; i < this.itemOrder.length; i++) {
+        if (!blockPositions[i]) continue;
+        let block = this.itemOrder[i];
+        let x = (block.order * this.blockWidth) % (this.itemsPerRow * this.blockWidth)
+        let y = Math.floor(block.order / this.itemsPerRow) * this.blockHeight
+        if (blockPositions[i].origin && blockPositions[i].origin.x == x && blockPositions[i].origin.y == y) continue;
+        blockPositions[i].origin = {x, y}
+        this.animateBlockMove(i, blockPositions[i].origin);
+      }
+      this.setState({blockPositions});
+      if (this.rows && this.items.length > 0) {
+        this.reAssessGridRows();
+      }
     }
   }
 
@@ -521,7 +630,39 @@ class SortableGrid extends Component {
       onShouldBlockNativeResponder:        (evt, gestureState) => false,
       onPanResponderTerminationRequest:    (evt, gestureState) => false,
       onPanResponderGrant:   this.onActiveBlockIsSet(this.onStartDrag),
-      onPanResponderMove:    this.onActiveBlockIsSet(this.onMoveBlock),
+      onPanResponderMove: (evt, gestureState) => {
+
+  function distance(t1, t2) {
+      let dx = Math.abs(t1.pageX - t2.pageX);
+      let dy = Math.abs(t1.pageY - t2.pageY);
+      return Math.sqrt(Math.pow(dx, 2) + Math.pow(dy, 2));
+    }
+
+        let touches = evt.nativeEvent.touches;
+        if (touches.length == 1) {
+          this.onActiveBlockIsSet(this.onMoveBlock)(evt, gestureState);
+          this.zooming = false;
+        }
+        else if (touches.length == 2) {
+          if (!this.zooming) {
+            this.zooming = true;
+            this.initialZoom = this.zoom || 1;
+            this.initialZoomDistance = distance(touches[0], touches[1]);
+            this.currentZoomDistance = this.initialZoomDistance;
+          }
+          else {
+              this.currentZoomDistance = distance(touches[0], touches[1]);
+              let diff = 1+(this.currentZoomDistance - this.initialZoomDistance) / this.initialZoomDistance;
+              this.zoom = this.initialZoom * diff;
+              this.assessGridSize({});
+          }
+          // pinch to zoom
+         // console.log(evt);
+        }
+        else {
+            this.zooming = false;
+        }
+      },
       onPanResponderRelease: this.onActiveBlockIsSet(this.onReleaseBlock)
     })
 
@@ -574,6 +715,9 @@ class SortableGrid extends Component {
   _getBlockStyle = (key) => [
     { width: this.state.blockWidth,
       height: this.state.blockHeight,
+      overflow: "hidden",
+      padding: 1,
+      alignItems: "stretch",
       justifyContent: 'center' },
     this._blockPositionsSet() && (this.initialDragDone || this.state.deleteModeOn) &&
     { position: 'absolute',
@@ -604,7 +748,8 @@ const styles = StyleSheet.create(
   },
   itemImageContainer: {
     flex: 1,
-    justifyContent: 'center'
+    justifyContent: 'center',
+    zIndex: 1
   }
 })
 
